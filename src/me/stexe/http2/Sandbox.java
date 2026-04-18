@@ -100,56 +100,55 @@ enum StaticHeaders {
     Status206(10),
     Status304(11),
     Status400(12),
-    Status403(13),
-    Status404(14),
-    Status500(15),
-    AcceptCharset(16),
-    AcceptEncodingGzipDeflate(17),
-    AcceptLanguage(18),
-    AcceptRanges(19),
-    Accept(20),
-    AccessControlAllowOrigin(21),
-    Age(22),
-    Allow(23),
-    Authorization(24),
-    CacheControl(25),
-    ContentDisposition(26),
-    ContentEncoding(27),
-    ContentLanguage(28),
-    ContentLength(29),
-    ContentLocation(30),
-    ContentRange(31),
-    ContentType(32),
-    Cookie(33),
-    Date(34),
-    Etag(35),
-    Expect(36),
-    Expires(37),
-    From(38),
-    Host(39),
-    IfMatch(40),
-    IfModifiedSince(41),
-    IfNoneMatch(42),
-    IfRange(43),
-    IfUnmodifiedSince(44),
-    LastModified(45),
-    Link(46),
-    Location(47),
-    MaxForwards(48),
-    ProxyAuthenticate(49),
-    ProxyAuthorization(50),
-    Range(51),
-    Referer(52),
-    Refresh(53),
-    RetryAfter(54),
-    Server(55),
-    SetCookie(56),
-    StrictTransportSecurity(57),
-    TransferEncoding(58),
-    UserAgent(59),
-    Vary(60),
-    Via(61),
-    WwwAuthenticate(62);
+    Status404(13),
+    Status500(14),
+    AcceptCharset(15),
+    AcceptEncodingGzipDeflate(16),
+    AcceptLanguage(17),
+    AcceptRanges(18),
+    Accept(19),
+    AccessControlAllowOrigin(20),
+    Age(21),
+    Allow(22),
+    Authorization(23),
+    CacheControl(24),
+    ContentDisposition(25),
+    ContentEncoding(26),
+    ContentLanguage(27),
+    ContentLength(28),
+    ContentLocation(29),
+    ContentRange(30),
+    ContentType(31),
+    Cookie(32),
+    Date(33),
+    Etag(34),
+    Expect(35),
+    Expires(36),
+    From(37),
+    Host(38),
+    IfMatch(39),
+    IfModifiedSince(40),
+    IfNoneMatch(41),
+    IfRange(42),
+    IfUnmodifiedSince(43),
+    LastModified(44),
+    Link(45),
+    Location(46),
+    MaxForwards(47),
+    ProxyAuthenticate(48),
+    ProxyAuthorization(49),
+    Range(50),
+    Referer(51),
+    Refresh(52),
+    RetryAfter(53),
+    Server(54),
+    SetCookie(55),
+    StrictTransportSecurity(56),
+    TransferEncoding(57),
+    UserAgent(58),
+    Vary(59),
+    Via(60),
+    WwwAuthenticate(61);
 
     final int index;
     StaticHeaders(int i) {
@@ -390,11 +389,30 @@ void writeHeaders(OutputStream out, List<HpackHeader> headers) throws IOExceptio
 }
 
 record Headers(
-
+    List<HpackHeader> headers
 ) {}
 
 Headers readHeaders(Context ctx, Frame frame) {
     // TODO: Implement padding
 
-    return new Headers();
+    int i = 0;
+    var headers = new ArrayList<HpackHeader>();
+    while (i < frame.length) {
+        if ((frame.payload[i] & 0x80) != 0) { // Indexed
+            int index = frame.payload[i] & 0x7f;
+            assert(index <= StaticHeaders.values().length); // TODO: Dynamic table
+            headers.add(new IndexedHeader(index));
+            i++;
+        } else if ((frame.payload[i] >> 6) == 0x01) { // Literal + indexing
+            int index = frame.payload[i] & 0x3f;
+            assert(index <= StaticHeaders.values().length); // TODO: Dynamic table
+
+            boolean huffmanEncoded = (frame.payload[i + 1] & 0x80) != 0;
+            int valueLen = frame.payload[i + 1] & 0x7f;
+
+            var strEnd = i + 1 + valueLen;
+        }
+    }
+
+    return new Headers(headers);
 }
