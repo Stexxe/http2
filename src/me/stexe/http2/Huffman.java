@@ -313,8 +313,12 @@ public class Huffman {
     }
 
     public static byte[] decode(byte[] bytes) {
+        return decode(bytes, 0, bytes.length);
+    }
+
+    public static byte[] decode(byte[] bytes, int start, int length) {
         var out = new ByteArrayOutputStream(bytes.length);
-        var stream = new BitStream(bytes);
+        var stream = new BitStream(bytes, start, length);
 
         Entry[] t = table;
         var eos = false;
@@ -346,11 +350,16 @@ public class Huffman {
 
     static class BitStream {
         private final byte[] array;
+        private final int start;
+        private final int length;
+
         private int offset = 0;
         private int index = 0;
 
-        public BitStream(byte[] arr) {
+        public BitStream(byte[] arr, int start, int length) {
             array = arr;
+            this.start = start;
+            this.length = length;
         }
 
         void consume(int numBits) {
@@ -362,8 +371,8 @@ public class Huffman {
         }
 
         byte getByte() {
-            int next = (index + 1 < array.length) ? (array[index + 1] & 0xff) : 0xff;
-            int bits = (index < array.length) ? (array[index] & 0xff) : 0xff;
+            int next = (index + 1 < length) ? (array[start + index + 1] & 0xff) : 0xff;
+            int bits = (index < length) ? (array[start + index] & 0xff) : 0xff;
             return (byte) (((bits << offset) & 0xff) | (next >> (8 - offset)));
         }
     }

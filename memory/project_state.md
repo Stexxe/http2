@@ -11,7 +11,7 @@ Current work is on `readHeaders` — HPACK decoding of the HEADERS frame payload
 **How to apply:** Use this to orient quickly on what's done and what's next without re-reading the full file.
 
 ## Recently completed
-- Fixed `StaticHeaders` enum: removed bogus `Status403(13)`, shifted all subsequent indices down by 1, `WwwAuthenticate` now correctly at 61 (was 62)
+- Fixed `StaticHeader` enum: removed bogus `Status403(13)`, shifted all subsequent indices down by 1, `WwwAuthenticate` now correctly at 61 (was 62)
 - `readHeaders` stub is being filled in — user has added partial literal+indexing branch (lines ~406-414)
 
 ## In progress

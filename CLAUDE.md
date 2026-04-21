@@ -48,5 +48,5 @@ From-scratch HTTP/2 (h2c) client in Java 25. Single source file: `src/me/stexe/h
 - `HpackHeader` sealed interface: `IndexedHeader`, `LiteralIndexedHeader`, `LiteralHeader`
 - All frame flag constants defined as `final int`: ACK=0x1, END_STREAM=0x1, END_HEADERS=0x4, PADDED=0x8, PRIORITY=0x20
 - Settings values stored as `Map<Integer, Long>` (raw integer keys to preserve unknown IDs)
-- `StaticHeaders` enum: all 62 HPACK static table entries, 1-based index
+- `StaticHeader` enum: all 62 HPACK static table entries, 1-based index
 - `SettingId` enum: RFC 7540 + RFC 8441 (ENABLE_CONNECT_PROTOCOL) + RFC 9218 (NO_RFC7540_PRIORITIES)

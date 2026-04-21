@@ -1,3 +1,5 @@
+import me.stexe.http2.Huffman;
+
 void main() throws IOException, InterruptedException {
     Thread logger = Thread.ofVirtual().start(() -> {
         while (true) {
@@ -19,6 +21,7 @@ void main() throws IOException, InterruptedException {
 
         AtomicLong maxConcurrentStreams = new AtomicLong(Long.MAX_VALUE);
         var settingsAckReceived = new CountDownLatch(1);
+        var settingsReceived = new CountDownLatch(1);
         var ctx = new Context(out, new AtomicInteger(0));
 
         var writer = Thread.ofVirtual().start(() -> {
@@ -30,13 +33,17 @@ void main() throws IOException, InterruptedException {
 
                 out.flush();
 
+                settingsReceived.await();
+
+                writeFrame(out, new Frame(0, FrameType.Settings, ACK, 0, new byte[0]));
+
                 settingsAckReceived.await();
 
                 var headers = new ArrayList<HpackHeader>();
-                headers.add(new IndexedHeader(StaticHeaders.MethodGET.index));
-                headers.add(new IndexedHeader(StaticHeaders.PathSlash.index));
-                headers.add(new IndexedHeader(StaticHeaders.SchemeHttp.index));
-                headers.add(new LiteralIndexedHeader(StaticHeaders.Authority.index, "localhost:9090", false));
+                headers.add(new IndexedHeader(StaticHeader.MethodGET.index));
+                headers.add(new IndexedHeader(StaticHeader.PathSlash.index));
+                headers.add(new IndexedHeader(StaticHeader.SchemeHttp.index));
+                headers.add(new LiteralIndexedHeader(StaticHeader.Authority.index, "localhost:9090", false));
 
                 writeHeaders(out, headers);
             } catch (IOException e) {
@@ -58,17 +65,47 @@ void main() throws IOException, InterruptedException {
                             maxConcurrentStreams.set(settings.get(SettingId.MaxConcurrentStreams));
                         }
 
+                        settingsReceived.countDown();
+
                         if ((frame.flags & ACK) > 0) {
                             settingsAckReceived.countDown();
                         }
                     } else if (frame.type == FrameType.Headers) {
                         var headers = readHeaders(ctx, frame);
+                        System.out.printf("Received headers with stream #%d%n", frame.streamId);
 
+                        System.out.println("HEADERS:");
+                        for (var h: headers.headers) {
+                            switch (h) {
+                                case IndexedHeader ih -> {
+                                    var staticHeader = StaticHeader.of(ih.index);
+                                    System.out.println(staticHeader.name());
+                                }
+                                case LiteralIndexedHeader lih -> {
+                                    assert(!lih.indexing);
+                                    var staticHeader = StaticHeader.of(lih.index);
+                                    System.out.printf("%s: %s%n", staticHeader.name(), lih.value);
+                                }
+                                default -> {
+                                    throw new IllegalStateException("Not implemented");
+                                }
+                            }
+                        }
+
+
+                    } else if (frame.type == FrameType.Data) {
+                        var data = readData(ctx, frame);
+
+                        System.out.println("BODY:");
+                        System.out.println(new String(data.body));
+                        break;
                     } else if (frame.type == FrameType.GoAway) {
                         var goaway = readGoAway(ctx, frame);
 
                         System.out.printf("Server sent GOAWAY: %s\n", goaway.code.name());
                         break;
+                    } else {
+                        throw new IllegalStateException("Frame type %s not implemented".formatted(frame.type.name()));
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -87,7 +124,7 @@ void log(String msg) {
     logQueue.add(msg);
 }
 
-enum StaticHeaders {
+enum StaticHeader {
     Authority(1),
     MethodGET(2),
     MethodPOST(3),
@@ -151,8 +188,12 @@ enum StaticHeaders {
     WwwAuthenticate(61);
 
     final int index;
-    StaticHeaders(int i) {
+    StaticHeader(int i) {
         index = i;
+    }
+
+    static StaticHeader of(int index) {
+        return Arrays.stream(StaticHeader.values()).filter(sh -> sh.index == index).findFirst().orElseThrow();
     }
 }
 
@@ -400,19 +441,83 @@ Headers readHeaders(Context ctx, Frame frame) {
     while (i < frame.length) {
         if ((frame.payload[i] & 0x80) != 0) { // Indexed
             int index = frame.payload[i] & 0x7f;
-            assert(index <= StaticHeaders.values().length); // TODO: Dynamic table
+            assert(index <= StaticHeader.values().length); // TODO: Dynamic table
             headers.add(new IndexedHeader(index));
             i++;
         } else if ((frame.payload[i] >> 6) == 0x01) { // Literal + indexing
             int index = frame.payload[i] & 0x3f;
-            assert(index <= StaticHeaders.values().length); // TODO: Dynamic table
+            assert(index <= StaticHeader.values().length); // TODO: Dynamic table
 
             boolean huffmanEncoded = (frame.payload[i + 1] & 0x80) != 0;
             int valueLen = frame.payload[i + 1] & 0x7f;
 
-            var strEnd = i + 1 + valueLen;
+            var value = huffmanEncoded ?
+                    new String(Huffman.decode(frame.payload, i + 2, valueLen)) :
+                    new String(frame.payload, i + 2, valueLen, StandardCharsets.US_ASCII);
+
+            headers.add(new LiteralIndexedHeader(index, value, false)); // TODO: Indexing
+            i += 2 + valueLen;
+        } else if ((frame.payload[i] >> 4) == 0x0000) {
+            var decodeRes = decodeInteger(frame.payload, i, 4);
+            var index = decodeRes[0];
+            var bytesRead = decodeRes[1];
+
+            var valueRes = decodeInteger(frame.payload, i + bytesRead, 7);
+            var valueLen = valueRes[0];
+            var valueStart = i + bytesRead + valueRes[1];
+
+            boolean huffmanEncoded = (frame.payload[i + bytesRead] & 0x80) != 0;
+
+            var value = huffmanEncoded ?
+                    new String(Huffman.decode(frame.payload, valueStart, valueLen)) :
+                    new String(frame.payload, valueStart, valueLen, StandardCharsets.US_ASCII);
+
+            headers.add(new LiteralIndexedHeader(index, value, false));
+            i = valueStart + valueLen;
+        } else {
+            throw new IllegalStateException("Not Implemented");
         }
     }
 
     return new Headers(headers);
+}
+
+record Data(
+    byte[] body
+) {}
+
+Data readData(Context ctx, Frame frame) {
+    assert((frame.flags & PADDED) == 0);
+    assert((frame.flags & END_STREAM) > 0);
+
+    byte[] body = Arrays.copyOfRange(frame.payload, 0, frame.length);
+    return new Data(body);
+}
+
+// First -> number, Second -> bytes read
+int[] decodeInteger(byte[] bytes, int start, int numBits) {
+    int mask = (1 << numBits) - 1;
+    long num = bytes[start] & mask;
+    int i = start + 1;
+
+    if (num == mask) { // Continuation
+        long res = 0;
+        int sh = 0;
+
+        while (true) {
+            res |= (long) (bytes[i] & 0x7f) << (sh * 7);
+            if ((bytes[i] & 0x80) == 0) break;
+            i++;
+            sh++;
+        }
+
+        i++;
+        num += res;
+    }
+
+    if (num > Integer.MAX_VALUE) {
+        throw new IllegalStateException("Integer overflow");
+    }
+
+    return new int[] {(int) num, i - start};
 }
