@@ -177,10 +177,13 @@ public class Http2Client implements AutoCloseable {
 
                         if (responseBuilder != null) {
                             responseBuilder.bodyStream.write(data.body());
-                            var future = pendingFutures.get(frame.streamId());
 
-                            if (future != null) {
-                                future.complete(responseBuilder.build());
+                            if ((frame.flags() & Flag.END_STREAM.id) > 0) {
+                                var future = pendingFutures.get(frame.streamId());
+
+                                if (future != null) {
+                                    future.complete(responseBuilder.build());
+                                }
                             }
                         }
                     } else if (frame.type() == FrameType.GoAway) {
@@ -424,7 +427,6 @@ public class Http2Client implements AutoCloseable {
     static Data readData(Context ctx, Frame frame) {
         // TODO: Padding
         assert((frame.flags() & Flag.PADDED.id) == 0);
-        assert((frame.flags() & Flag.END_STREAM.id) > 0);
 
         byte[] body = Arrays.copyOfRange(frame.payload(), 0, frame.length());
         return new Data(body);
