@@ -169,6 +169,14 @@ public class Http2Client implements AutoCloseable {
                                     }
                                 }
                             }
+
+                            if ((frame.flags() & Flag.END_STREAM.id) != 0) {
+                                var future = pendingFutures.get(frame.streamId());
+
+                                if (future != null) {
+                                    future.complete(responseBuilder.build());
+                                }
+                            }
                         }
                     } else if (frame.type() == FrameType.Data) {
                         var data = readData(ctx, frame);

@@ -11,6 +11,7 @@ import java.util.Scanner;
 import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class ClientTest {
 
@@ -18,6 +19,14 @@ public class ClientTest {
     @Timeout(5)
     void noContent() throws IOException, URISyntaxException, ExecutionException, InterruptedException {
         var server = new ProcessBuilder("test-data/.venv/bin/python3", "test-data/no-content.py").start();
+
+        var stderrThread = Thread.ofVirtual().start(() -> {
+            try {
+                server.getErrorStream().transferTo(System.err);
+            } catch (IOException e) {
+                fail(e);
+            }
+        });
 
         var scanner = new Scanner(server.getInputStream());
 
@@ -31,13 +40,10 @@ public class ClientTest {
 
                 assertEquals(204, response.status());
                 assertEquals(0, response.body().length);
-                // TODO: Check other headers
             }
         } finally {
             server.destroy();
-
-            String stderr = new String(server.getErrorStream().readAllBytes());
-            System.out.println(stderr);
+            stderrThread.join();
         }
     }
 }
