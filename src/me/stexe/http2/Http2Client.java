@@ -1,9 +1,6 @@
 package me.stexe.http2;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.ProtocolException;
 import java.net.Socket;
 import java.net.SocketException;
@@ -80,18 +77,35 @@ public class Http2Client implements AutoCloseable {
                         var url = request.url();
 
                         var headers = new ArrayList<HpackHeader>();
-                        assert(request.method() == HttpMethod.GET);
-                        headers.add(new IndexedHeader(StaticHeader.MethodGET.index));
 
-                        assert(Objects.equals(url.getPath(), "/"));
-                        headers.add(new IndexedHeader(StaticHeader.PathSlash.index));
+                        switch (request.method()) {
+                            case HttpMethod.GET -> {
+                                headers.add(new IndexedHeader(StaticHeader.MethodGET.index));
+                            }
+                            case HttpMethod.POST -> {
+                                headers.add(new IndexedHeader(StaticHeader.MethodPOST.index));
+                            }
+                            default -> {
+                                throw new IllegalStateException("Request method %s not implemented".formatted(request.method().name()));
+                            }
+                        }
+
+                        if (Objects.equals(url.getPath(), "/")) {
+                            headers.add(new IndexedHeader(StaticHeader.PathSlash.index));
+                        } else {
+                            headers.add(new LiteralIndexedHeader(StaticHeader.PathSlash.index, url.getPath(), false));
+                        }
 
                         headers.add(new IndexedHeader(StaticHeader.SchemeHttp.index));
 
                         var hostPort = url.getPort() == -1 ? url.getHost() : "%s:%d".formatted(url.getHost(), url.getPort());
                         headers.add(new LiteralIndexedHeader(StaticHeader.Authority.index, hostPort, false));
 
-                        writeHeaders(out, headers, streamId);
+                        writeHeaders(out, headers, streamId, request.body().length == 0);
+
+                        if (request.body().length > 0) {
+                            writeData(out, request.body(), streamId);
+                        }
                     } catch (InterruptedException e) {
                         break;
                     } catch (IOException e) {
@@ -206,6 +220,8 @@ public class Http2Client implements AutoCloseable {
                     if (e instanceof SocketException) {
                         Thread.currentThread().interrupt();
                         break;
+                    } else if (e instanceof EOFException) {
+                        break;
                     }
                     e.printStackTrace();
                 }
@@ -224,6 +240,8 @@ public class Http2Client implements AutoCloseable {
 
     static Frame readFrame(InputStream input) throws IOException {
         byte[] header = input.readNBytes(9);
+        if (header.length < 9) throw new EOFException();
+
         int length = ((header[0] & 0xff) << 16) | ((header[1] & 0xff) << 8) | (header[2] & 0xff);
 
         FrameType type = switch (header[3]) {
@@ -343,7 +361,7 @@ public class Http2Client implements AutoCloseable {
     record LiteralIndexedHeader(int index, String value, boolean indexing) implements HpackHeader {}
     record LiteralHeader(String name, String value, boolean indexing) implements HpackHeader {}
 
-    static void writeHeaders(OutputStream out, List<HpackHeader> headers, int streamId) throws IOException {
+    static void writeHeaders(OutputStream out, List<HpackHeader> headers, int streamId, boolean endStream) throws IOException {
         var headersStream = new ByteArrayOutputStream();
 
         for (var h: headers) {
@@ -379,7 +397,15 @@ public class Http2Client implements AutoCloseable {
 
         var headerBlock = headersStream.toByteArray();
         // TODO: Fix flags
-        writeFrame(out, new Frame(headerBlock.length, FrameType.Headers, Flag.END_STREAM.id | Flag.END_HEADERS.id, streamId, headerBlock));
+        writeFrame(out, new Frame(headerBlock.length, FrameType.Headers, (endStream ? Flag.END_STREAM.id : 0) | Flag.END_HEADERS.id, streamId, headerBlock));
+    }
+
+    static void writeData(OutputStream out, byte[] body, int streamId) throws IOException {
+        // TODO: Send multiple frames
+        writeFrame(
+            out,
+            new Frame(body.length, FrameType.Data, Flag.END_STREAM.id, streamId, body)
+        );
     }
 
     static Headers readHeaders(Context ctx, Frame frame) {
